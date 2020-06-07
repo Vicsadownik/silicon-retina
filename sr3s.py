@@ -7,19 +7,14 @@ import networkx as nx
 from ortools.sat.python import cp_model
 
 '''
-Алгоритм разрешения конфликтов в запутанном ориентированном графе.
-или каждой твари по паре (two of every kind)
-
-Задача есть 2 набора объектов (в широком смысле), которые похожи 
-друг на друга (с какой-то мерой похожести). Необходимо найти
-индивидуальные пары или сказать, что с данной кондигурацией (кликой)
-этот вариант не проходит - какие-то пары не могут иметь 
-уникальных соединений p2p
+Conflict Resolution Algorithm in a Tangled Directed graphs or “two of every kind”.
+Ten royal grooms want to choose brides from ten kingdoms as their wives, 
+but at the same time the royal sympathies are ambiguous (everyone likes not one, but several princesses). 
+How to unequivocally satisfy their expectations - so that each prince has a special princess 
+and so that no one fights.
+Fast and concise implementation of Constraint programming (CP) technology based on the free Google OR-Tools software.
 
 '''
-
-
-
 #-----------------------------------------------------------------------
 '''
 	plot demo
@@ -42,18 +37,18 @@ def implotn(images,fig=7055, title=None, cmap='gray',label=None):
 #-----------------------------------------------------------------------
 
 '''
-	Random graph maker
+	Random graph (Tangled Directed) maker
 	n - number of base nodes (total nodes = n * 2)
 	m - max number of edges from node
 	vi = {None, number}, if vi!=None then plot-demo
 '''
 def makerandomgraph(n=10,m=5,vi=None):
-	G = nx.DiGraph()													# new dir graph							
-	en = np.random.random_integers(1,m,n)								# number of edges from each base nodes кол-во ребер из каждой вершины от 1 до m
+	G = nx.DiGraph()								# new dir graph							
+	en = np.random.random_integers(1,m,n)						# number of edges from each base nodes кол-во ребер из каждой вершины от 1 до m
 	ee = [ np.unique(np.random.random_integers(n,2*n-1,j)).tolist() for j in en ] 	# candidates nodes for each base nodes
 	edges = [ (i,j) for i,e in enumerate(ee) for j in e ]				# all edges 
-	G.add_edges_from(edges)												# add edges to graph
-	if not vi is None:													# if demo-mode
+	G.add_edges_from(edges)								# add edges to graph
+	if not vi is None:								# if demo-mode
 		color_map = [ 'orange' if node < n else 'skyblue' for node in G ]
 		zero = np.ones((100,100,3))
 		ax = implotn([zero],title='Random confusing-directed-graph '+str([n,m]),fig=vi)
@@ -65,8 +60,7 @@ def makerandomgraph(n=10,m=5,vi=None):
 
 
 '''
-	Класс для получения всех возможных решений
-	c накопителем
+	Class for multisolutions 
 '''
 class VarArraySolutionCollector(cp_model.CpSolverSolutionCallback):
 	def __init__(self, variables, limit=np.inf):
@@ -84,37 +78,35 @@ class VarArraySolutionCollector(cp_model.CpSolverSolutionCallback):
 #-----------------------------------------------------------------------
 
 '''
-	Берет из графа все ребра (все пары вершин) и формирует из них правила
-	как хэши кто на кого ссылается и на кого кто ссылается (прямой и обратный проход)
-	вида
-	[[0, 1, 2, 3, 4], [5, 6, 7], [8], [9, 10], ..., [37]] - столько сколько вершин у графа + формулы обратного прохода
-	где числа - индексы ребер графа
-	возвращает массив правил и массив всех ребер графа
+	It takes all edges (all pairs of vertices) from the graph and forms rules from them as hashes (who refers to whom)
+	kind of [[0, 1, 2, 3, 4], [5, 6, 7], [8], [9, 10], ..., [37]] - as many vertices as the graph + backward formula
+	where the numbers are the indices of the edges of the graph.
+	Returns an array of rules and an array of all edges of the graph
 '''
 def makerules(G):
-	edges = np.array(list(G.edges()))			# все ребра графа
-	nodes1,nodes2 = edges[:,0],edges[:,1]		# парные вершины графа (все варианты)
-	a1 = {}		# прямой хэш: на каких кадидатов ссылается каждый тестовый 
-	a2 = {}		# обратный хэш: какие тестовые ссылаются на каждого кандидата 
+	edges = np.array(list(G.edges()))		# graph edges
+	nodes1,nodes2 = edges[:,0],edges[:,1]		# pairs nodes (base and candidates)
+	a1 = {}		# direct hash: which cadidates each base link refers to 
+	a2 = {}		# reverse hash: which base references each candidate 
 	for i in range(len(nodes1)): 
 		e1,e2 = nodes1[i],nodes2[i]
 		if e1 in a1: a1[e1].append(e2)
 		else: a1[e1]=[e2]
 		if e2 in a2: a2[e2].append(e1)
 		else: a2[e2]=[e1]
-	rules = []				# накопитель всех правил
-	k = 0					# счетчик пары (ребра) для прямого прохода
-	for key1 in a1:			# прямой проход						
+	rules = []			# rules accumulator
+	k = 0				# counter for direct 
+	for key1 in a1:								
 		o = []									
 		for l2 in a1[key1]:				
 			o.append( k )
 			k += 1
 		rules.append( o )
 	r0 = edges.tolist()
-	for key2 in a2:			# обратный проход
+	for key2 in a2:			# revers
 		o = []
 		for l1 in a2[key2]:
-			k = r0.index([l1,key2])
+			k = r0.index([l1,key2])	# counter for reverse 
 			o.append( k )	
 		rules.append( o )
 	return edges,rules
@@ -122,23 +114,23 @@ def makerules(G):
 #-----------------------------------------------------------------------
 
 '''
-	Возвращает массив ребер, массив правил и все возможные решения (или пустой массив)
+	Make and run CP-SAT Solver for Tangled Directed graphs
 '''
 def extractalldigraph(G,limit=20,vi=None):
 		
-	R,O = makerules(G)													# get all edges and rules to create variables and constraints
+	R,O = makerules(G)							# get all edges and rules to create variables and constraints
 	
-	model = cp_model.CpModel() 											# declares the CP-SAT model
-	X = [ model.NewIntVar(0,1, 'x'+str(i) ) for i in range(len(R)) ]	# creates the variables for the problem - столько сколько всего ребер
-	_= [ model.Add( np.sum([ X[i] for i in o ]) == 1 ) for o in O ]		# creates the constraint - создание граничных условий из правил
-	solver = cp_model.CpSolver()										# calls the solver
-	# solver.parameters.max_time_in_seconds = 12.0							# limit by processing time
+	model = cp_model.CpModel() 						# declares the CP-SAT model
+	X = [ model.NewIntVar(0,1, 'x'+str(i) ) for i in range(len(R)) ]	# creates the variables for the problem
+	_= [ model.Add( np.sum([ X[i] for i in o ]) == 1 ) for o in O ]		# creates the constraint 
+	solver = cp_model.CpSolver()						# calls the solver
+	# solver.parameters.max_time_in_seconds = 12.0				# limit by processing time
 																		# limit by number of solutions
 	solution_collector = VarArraySolutionCollector(X,limit=limit)		# to find all feasible solutions		
-	solver.SearchForAllSolutions(model, solution_collector)				# and place their to collector
+	solver.SearchForAllSolutions(model, solution_collector)			# and place their to collector
 	assert solution_collector.solutionlimit == limit
 	
-	rr = solution_collector.solution_list								# get all feasible solutions
+	rr = solution_collector.solution_list					# get all feasible solutions
 	
 	if len(rr)==0:		# NO feasible solution
 		if vi: print('CP-SAT solver === NO feasible solution')
@@ -146,21 +138,21 @@ def extractalldigraph(G,limit=20,vi=None):
 	
 	if not vi is None: # if demo-mode
 		
-		r0 = rr[0]									# select [0] solution
+		r0 = rr[0]					# select [0] solution
 		r = [ [ r0[i] for i in o ] for o in O ]		# by rules
 		
 		print('CP-SAT solver === OK, total',len(rr),'feasible solutions, limit:',limit) 
 		
-		n = len(G.nodes())/2						# total base nodes
+		n = len(G.nodes())/2					# total base nodes
 		color_edges = ['skyblue']*len(R)			# set colors for edges
 			
-		for i,o in enumerate(O):					# set RED-color for nonzero (selected) edges
+		for i,o in enumerate(O):				# set RED-color for nonzero (selected) edges
 			j = o[np.where(np.array(r[i])>0)[0][0]]
 			color_edges[j] = 'red' 
 			
 		color_map = [ 'red' if node < n else 'skyblue' for node in G ]	#  set colors for nodes
 		
-		zero = np.ones((100,100,3))										# zero image for demo
+		zero = np.ones((100,100,3))				# zero image for demo
 		
 		# labels for edges
 		h = [ mpatches.Patch(label=str(i)+' to '+str(R[o][:,1].tolist())) for i,o in enumerate(O[:int(n)]) ]
